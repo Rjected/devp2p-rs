@@ -51,6 +51,7 @@ pub struct Table {
 }
 
 impl Table {
+    /// Construct a new [`Table`]
     pub fn new(id: NodeId) -> Self {
         Self {
             id_hash: keccak256(id),
@@ -84,6 +85,7 @@ impl Table {
         None
     }
 
+    /// Get the [`Endpoint`] for the requested peer.
     pub fn get(&self, peer: NodeId) -> Option<Endpoint> {
         self.bucket(peer).and_then(|(_, bucket)| {
             bucket
@@ -215,9 +217,14 @@ impl Table {
             .collect()
     }
 
+    /// Returns the number of peers in all buckets in the table
     pub fn len(&self) -> usize {
         self.kbuckets
             .iter()
             .fold(0, |total, bucket| total + bucket.bucket.len())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.kbuckets.iter().all(|bucket| bucket.bucket.is_empty())
     }
 }
