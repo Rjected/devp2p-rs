@@ -43,10 +43,10 @@ use uuid::Uuid;
 
 const GRACE_PERIOD_SECS: u64 = 2;
 const HANDSHAKE_TIMEOUT_SECS: u64 = 10;
-const PING_TIMEOUT: Duration = Duration::from_secs(15);
+const _PING_TIMEOUT: Duration = Duration::from_secs(15);
 const PING_INTERVAL: Duration = Duration::from_secs(60);
-const DISCOVERY_TIMEOUT_SECS: u64 = 90;
-const DISCOVERY_CONNECT_TIMEOUT_SECS: u64 = 5;
+const _DISCOVERY_TIMEOUT_SECS: u64 = 90;
+const _DISCOVERY_CONNECT_TIMEOUT_SECS: u64 = 5;
 
 #[derive(Clone, Copy, Debug)]
 enum DisconnectInitiator {
@@ -81,7 +81,7 @@ impl PeerConnectionState {
 #[derive(Debug)]
 struct PeerState {
     connection_state: PeerConnectionState,
-    sem_permit: OwnedSemaphorePermit,
+    _sem_permit: OwnedSemaphorePermit,
 }
 
 #[derive(Debug)]
@@ -418,7 +418,7 @@ async fn handle_incoming_request<C, Io>(
                                     remote_id,
                                     peer,
                                 )),
-                                sem_permit,
+                                _sem_permit: sem_permit,
                             });
                         } else {
                             trace!("Node filter rejected peer {}, disconnecting", remote_id);
@@ -819,7 +819,7 @@ impl<C: CapabilityServer> Swarm<C> {
 
                             vacant.insert(PeerState {
                                 connection_state: PeerConnectionState::Connecting { connection_id },
-                                sem_permit,
+                                _sem_permit: sem_permit,
                             });
                             inserted = true;
                         }

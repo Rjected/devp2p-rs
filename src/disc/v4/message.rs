@@ -116,7 +116,7 @@ impl Encodable for PingMessage {
 
 #[derive(RlpDecodable)]
 struct PingMessageD {
-    version: u64,
+    _version: u64,
     from: Endpoint,
     to: Endpoint,
     expire: u64,
@@ -124,11 +124,11 @@ struct PingMessageD {
 
 #[derive(RlpDecodable)]
 struct PingMessageDEnr {
-    version: u64,
+    _version: u64,
     from: Endpoint,
     to: Endpoint,
     expire: u64,
-    enr_seq: u64,
+    _enr_seq: u64,
 }
 
 impl Decodable for PingMessage {
@@ -176,7 +176,7 @@ struct PongMessageDEnr {
     to: Endpoint,
     echo: H256,
     expire: u64,
-    enr_seq: u64,
+    _enr_seq: u64,
 }
 
 impl Decodable for PongMessage {

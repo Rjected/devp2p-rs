@@ -1,6 +1,5 @@
 use super::message::*;
 use enum_primitive_derive::Primitive;
-use num_traits::FromPrimitive;
 use tokio::sync::oneshot::Sender as OneshotSender;
 
 #[derive(Primitive)]
