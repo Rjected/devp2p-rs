@@ -35,10 +35,17 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
-      - name: Install nightly toolchain
+      - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+          profile: minimal
+          components: rustfmt, clippy
+          override: true
+      - name: Install nightly toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
           profile: minimal
           components: rustfmt, clippy
           override: true
@@ -48,7 +55,7 @@ jobs:
       - name: cargo fmt
         run: cargo +nightly fmt --all -- --check
       - name: cargo clippy
-        run: cargo clippy --all-features -- -D warnings
+        run: cargo +stable clippy --all-features -- -D warnings
 
   publish:
     # Only do this job if publishing a release
