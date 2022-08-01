@@ -1,0 +1,63 @@
+[package]
+name = "devp2p-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+aes = "0.8.1"
+anyhow = { version = "1.0.58", features = ["std"] }
+array-init = "2.0.1"
+arrayvec = "0.7.2"
+async-stream = "0.3.3"
+async-trait = "0.1.56"
+auto_impl = "1.0.1"
+block-padding = "0.3.2"
+byteorder = "1.4.3"
+bytes = "1.2.0"
+chrono = "0.4.19"
+cidr = "0.2.1"
+cipher = { version = "0.4", features = ["block-padding"] }
+ctr = "0.9.1"
+data-encoding = "2.3.2"
+derive_more = "0.99.17"
+digest = "0.10.3"
+educe = "0.4.19"
+enr = { git = "https://github.com/rust-ethereum/enr", default-features = false, features = [
+  "rust-secp256k1",
+] }
+enum-primitive-derive = "0.2.2"
+ethereum-types = "0.13.1"
+fastrlp = { version = "0.1.3", features = [ "derive", "ethereum-types", "std" ] }
+futures = "0.3.21"
+generic-array = "0.14.5"
+hex = "0.4.3"
+hmac = "0.12.1"
+igd = { version = "0.12.0", features = [ "aio" ] }
+lru = "0.7.8"
+maplit = "1.0.2"
+num-traits = "0.2.15"
+parking_lot = "0.12.1"
+rand = "0.8.5"
+secp256k1 = { version = "0.24.0", features = [ "global-context", "rand-std", "recovery" ] }
+sha2 = "0.10.2"
+sha3 = "0.10.1"
+snap = "1.0.5"
+# discovery uses these structured concurrency primitives
+task-group = { git = "https://github.com/vorot93/task-group" }
+thiserror = "1.0.31"
+tokio = { version = "1.20.1", features = [ "full" ] }
+tokio-stream = "0.1.9"
+tokio-util = { version = "0.7.3", features = ["codec"] }
+tracing = "0.1.35"
+trust-dns-resolver = "0.21.2"
+typenum = "1.15.0"
+url = "2.2.2"
+uuid = { version = "1.1.2", features = [ "v4" ] }
+
+[dev-dependencies]
+hex-literal = "0.3.4"
+proptest = "1.0.0"
+
+[lib]
