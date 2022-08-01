@@ -1,8 +1,8 @@
 use super::{NodeId, NodeRecord};
-use derive_more::*;
 use bytes::BufMut;
-use fastrlp::{Encodable, Decodable, Header, DecodeError, RlpEncodable, RlpDecodable};
+use derive_more::*;
 use ethereum_types::H256;
+use fastrlp::{Decodable, DecodeError, Encodable, Header, RlpDecodable, RlpEncodable};
 use std::net::IpAddr;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deref, DerefMut, From)]

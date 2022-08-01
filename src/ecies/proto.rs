@@ -2,7 +2,7 @@ use super::algorithm::{ECIES, MAX_BODY_SIZE};
 use crate::{errors::ECIESError, transport::Transport, types::PeerId};
 use anyhow::{bail, Context as _};
 use bytes::{Bytes, BytesMut};
-use futures::{Sink, SinkExt, ready};
+use futures::{ready, Sink, SinkExt};
 use secp256k1::SecretKey;
 use std::{
     fmt::Debug,
@@ -11,8 +11,8 @@ use std::{
     task::{Context, Poll},
 };
 use tokio_stream::{Stream, StreamExt};
-use tokio_util::codec::{Framed, Encoder, Decoder};
-use tracing::{debug, trace, instrument};
+use tokio_util::codec::{Decoder, Encoder, Framed};
+use tracing::{debug, instrument, trace};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Current ECIES state of a connection

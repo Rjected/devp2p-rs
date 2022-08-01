@@ -3,7 +3,7 @@ use cidr::IpCidr;
 use std::{fmt::Debug, net::SocketAddr};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    net::{TcpStream, TcpListener}
+    net::{TcpListener, TcpStream},
 };
 use tracing::debug;
 

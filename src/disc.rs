@@ -1,4 +1,4 @@
-use crate::{PeerId, NodeRecord};
+use crate::{NodeRecord, PeerId};
 use async_stream::stream;
 use futures::{stream::BoxStream, StreamExt};
 use std::{collections::HashMap, net::SocketAddr, pin::Pin, task::Poll, time::Duration};

@@ -2,12 +2,12 @@ use super::{kad::*, message::*, proto::*, util::*, NodeId};
 use anyhow::{anyhow, bail, Context};
 use bytes::{BufMut, BytesMut};
 use chrono::Utc;
+use ethereum_types::H256;
 use fastrlp::*;
 use futures::future::join_all;
 use igd::aio::search_gateway;
-use parking_lot::{Mutex, RwLock};
-use ethereum_types::H256;
 use num_traits::FromPrimitive;
+use parking_lot::{Mutex, RwLock};
 use rand::{distributions::Standard, prelude::SliceRandom, thread_rng, Rng};
 use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},

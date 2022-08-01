@@ -1,10 +1,9 @@
 use crate::{
-    PeerId,
     errors::ECIESError,
-    mac::{MAC, HeaderBytes},
+    mac::{HeaderBytes, MAC},
     util::{hmac_sha256, id2pk, pk2id, sha256},
+    PeerId,
 };
-use ethereum_types::{H256, H128};
 use aes::{cipher::StreamCipher, Aes128, Aes256};
 use anyhow::{format_err, Context};
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
@@ -12,7 +11,8 @@ use bytes::{BufMut, Bytes, BytesMut};
 use ctr::Ctr64BE;
 use digest::{crypto_common::KeyIvInit, Digest};
 use educe::Educe;
-use fastrlp::{Encodable, RlpEncodable, RlpMaxEncodedLen, Rlp};
+use ethereum_types::{H128, H256};
+use fastrlp::{Encodable, Rlp, RlpEncodable, RlpMaxEncodedLen};
 use rand::{thread_rng, Rng};
 use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
