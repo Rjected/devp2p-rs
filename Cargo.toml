@@ -24,7 +24,7 @@ data-encoding = "2.3.2"
 derive_more = "0.99.17"
 digest = "0.10.3"
 educe = "0.4.19"
-enr = { git = "https://github.com/rust-ethereum/enr", default-features = false, features = [
+enr = { git = "https://github.com/sigp/enr", default-features = false, features = [
   "rust-secp256k1",
 ] }
 enum-primitive-derive = "0.2.2"
