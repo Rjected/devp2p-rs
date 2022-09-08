@@ -43,7 +43,7 @@ use uuid::Uuid;
 
 const GRACE_PERIOD_SECS: u64 = 2;
 const HANDSHAKE_TIMEOUT_SECS: u64 = 10;
-const _PING_TIMEOUT: Duration = Duration::from_secs(15);
+const PING_TIMEOUT: Duration = Duration::from_secs(15);
 const PING_INTERVAL: Duration = Duration::from_secs(60);
 const _DISCOVERY_TIMEOUT_SECS: u64 = 90;
 const _DISCOVERY_CONNECT_TIMEOUT_SECS: u64 = 5;
