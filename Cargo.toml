@@ -28,8 +28,8 @@ enr = { git = "https://github.com/sigp/enr", default-features = false, features 
   "rust-secp256k1",
 ] }
 enum-primitive-derive = "0.2.2"
-ethereum-types = "0.13.1"
-fastrlp = { version = "0.1.3", features = [ "derive", "ethereum-types", "std" ] }
+ethereum-types = "0.14.0"
+fastrlp = { version = "0.2.0", features = [ "derive", "ethereum-types", "std" ] }
 futures = "0.3.21"
 generic-array = "0.14.5"
 hex = "0.4.3"
