@@ -51,7 +51,7 @@ tokio = { version = "1.20.1", features = [ "full" ] }
 tokio-stream = "0.1.9"
 tokio-util = { version = "0.7.3", features = ["codec"] }
 tracing = "0.1.35"
-trust-dns-resolver = "0.21.2"
+trust-dns-resolver = "0.22.0"
 typenum = "1.15.0"
 url = "2.2.2"
 uuid = { version = "1.1.2", features = [ "v4" ] }
