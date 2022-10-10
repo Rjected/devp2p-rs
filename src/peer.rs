@@ -1,4 +1,6 @@
-use super::{ecies::ECIESStream, transport::Transport, types::*, util::pk2id};
+use crate::rlpx::{RLPxMessage, CompressedRLPxMessage, DevP2PMessage, P2PMessage, P2PMessageID};
+
+use super::{ecies::ECIESStream, transport::Transport, types::*, util::pk2id, rlpx::Snappy};
 use anyhow::{anyhow, bail, Context as _};
 use bytes::{Bytes, BytesMut};
 use derive_more::Display;
@@ -19,7 +21,7 @@ use tracing::*;
 const MAX_PAYLOAD_SIZE: usize = 16 * 1024 * 1024;
 
 /// RLPx disconnect reason.
-#[derive(Clone, Copy, Debug, Display, Primitive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Display, Primitive)]
 pub enum DisconnectReason {
     #[display(fmt = "disconnect requested")]
     DisconnectRequested = 0x00,
@@ -49,6 +51,29 @@ pub enum DisconnectReason {
     SubprotocolSpecific = 0x10,
 }
 
+impl TryFrom<usize> for DisconnectReason {
+    type Error = &'static str;
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(Self::DisconnectRequested),
+            0x01 => Ok(Self::TcpSubsystemError),
+            0x02 => Ok(Self::ProtocolBreach),
+            0x03 => Ok(Self::UselessPeer),
+            0x04 => Ok(Self::TooManyPeers),
+            0x05 => Ok(Self::AlreadyConnected),
+            0x06 => Ok(Self::IncompatibleP2PProtocolVersion),
+            0x07 => Ok(Self::NullNodeIdentity),
+            0x08 => Ok(Self::ClientQuitting),
+            0x09 => Ok(Self::UnexpectedHandshakeIdentity),
+            0x0a => Ok(Self::ConnectedToSelf),
+            0x0b => Ok(Self::PingTimeout),
+            0x10 => Ok(Self::SubprotocolSpecific),
+            _ => Err("unknown disconnect reason"),
+        }
+    }
+}
+
 /// RLPx protocol version.
 #[derive(Copy, Clone, Debug, Primitive)]
 pub enum ProtocolVersion {
@@ -61,28 +86,13 @@ pub struct CapabilityMessage {
     pub version: usize,
 }
 
-#[derive(Clone, Debug, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, RlpEncodable, RlpDecodable)]
 pub struct HelloMessage {
     pub protocol_version: usize,
     pub client_version: String,
     pub capabilities: Vec<CapabilityMessage>,
     pub port: u16,
     pub id: PeerId,
-}
-
-#[derive(Debug)]
-struct Snappy {
-    encoder: snap::raw::Encoder,
-    decoder: snap::raw::Decoder,
-}
-
-impl Default for Snappy {
-    fn default() -> Self {
-        Self {
-            encoder: snap::raw::Encoder::new(),
-            decoder: snap::raw::Decoder::new(),
-        }
-    }
 }
 
 /// RLPx transport peer stream
@@ -292,11 +302,125 @@ pub enum PeerMessage {
     Subprotocol(SubprotocolMessage),
 }
 
+// impl<Io> Stream for PeerStream<Io>
+// where
+//     Io: Transport,
+// {
+//     type Item = Result<PeerMessage, io::Error>;
+
+//     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+//         let mut s = self.get_mut();
+
+//         if s.disconnected {
+//             return Poll::Ready(None);
+//         }
+
+//         match ready!(Pin::new(&mut s.stream).poll_next(cx)) {
+//             Some(Ok(val)) => {
+//                 trace!("Received peer message: {}", hex::encode(&val));
+
+//                 let (cap, id, data) = match u8::decode(&mut &val[..1]) {
+//                     Ok(message_id) => {
+//                         let input = &val[1..];
+//                         let payload_len = snap::raw::decompress_len(input)?;
+//                         if payload_len > MAX_PAYLOAD_SIZE {
+//                             return Poll::Ready(Some(Err(io::Error::new(
+//                                 io::ErrorKind::InvalidInput,
+//                                 format!(
+//                                     "payload size ({}) exceeds limit ({} bytes)",
+//                                     payload_len, MAX_PAYLOAD_SIZE
+//                                 ),
+//                             ))));
+//                         }
+//                         let data = Bytes::from(s.snappy.decoder.decompress_vec(input)?);
+//                         trace!("Decompressed raw message data: {}", hex::encode(&data));
+
+//                         if message_id < 0x10 {
+//                             match message_id {
+//                                 0x01 => {
+//                                     s.disconnected = true;
+//                                     if let Some(reason) = u8::decode(&mut &*data)
+//                                         .ok()
+//                                         .and_then(DisconnectReason::from_u8)
+//                                     {
+//                                         return Poll::Ready(Some(Ok(PeerMessage::Disconnect(
+//                                             reason,
+//                                         ))));
+//                                     } else {
+//                                         return Poll::Ready(Some(Err(io::Error::new(
+//                                             io::ErrorKind::Other,
+//                                             format!(
+//                                                 "peer disconnected with malformed message: {}",
+//                                                 hex::encode(data)
+//                                             ),
+//                                         ))));
+//                                     }
+//                                 }
+//                                 0x02 => {
+//                                     debug!("received ping message data {:?}", data);
+//                                     return Poll::Ready(Some(Ok(PeerMessage::Ping)));
+//                                 }
+//                                 0x03 => {
+//                                     debug!("received pong message");
+//                                     return Poll::Ready(Some(Ok(PeerMessage::Pong)));
+//                                 }
+//                                 _ => {
+//                                     debug!("received unknown reserved message");
+//                                     return Poll::Ready(Some(Err(io::Error::new(
+//                                         io::ErrorKind::Other,
+//                                         "unhandled reserved message",
+//                                     ))));
+//                                 }
+//                             }
+//                         }
+
+//                         let mut message_id = message_id as usize - 0x10;
+//                         let mut index = 0;
+//                         for cap in &s.shared_capabilities {
+//                             if message_id > cap.length {
+//                                 message_id -= cap.length;
+//                                 index += 1;
+//                             }
+//                         }
+//                         if index >= s.shared_capabilities.len() {
+//                             return Poll::Ready(Some(Err(io::Error::new(
+//                                 io::ErrorKind::Other,
+//                                 "invalid message id (out of cap range)",
+//                             ))));
+//                         }
+                        // (s.shared_capabilities[index], message_id, data)
+//                     }
+//                     Err(e) => {
+//                         return Poll::Ready(Some(Err(io::Error::new(
+//                             io::ErrorKind::Other,
+//                             format!("message id parsing failed (invalid): {}", e),
+//                         ))));
+//                     }
+//                 };
+
+//                 trace!(
+//                     "Cap: {}, id: {}, data: {}",
+//                     CapabilityId::from(cap),
+//                     id,
+//                     hex::encode(&data)
+//                 );
+
+//                 Poll::Ready(Some(Ok(PeerMessage::Subprotocol(SubprotocolMessage {
+//                     cap_name: cap.name,
+//                     message: Message { id, data },
+//                 }))))
+//             }
+//             Some(Err(e)) => Poll::Ready(Some(Err(e))),
+//             None => Poll::Ready(None),
+//         }
+//     }
+// }
+
 impl<Io> Stream for PeerStream<Io>
 where
     Io: Transport,
 {
-    type Item = Result<PeerMessage, io::Error>;
+    type Item = Result<DevP2PMessage, io::Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut s = self.get_mut();
@@ -309,76 +433,80 @@ where
             Some(Ok(val)) => {
                 trace!("Received peer message: {}", hex::encode(&val));
 
-                let (cap, id, data) = match u8::decode(&mut &val[..1]) {
-                    Ok(message_id) => {
-                        let input = &val[1..];
-                        let payload_len = snap::raw::decompress_len(input)?;
-                        if payload_len > MAX_PAYLOAD_SIZE {
-                            return Poll::Ready(Some(Err(io::Error::new(
-                                io::ErrorKind::InvalidInput,
-                                format!(
-                                    "payload size ({}) exceeds limit ({} bytes)",
-                                    payload_len, MAX_PAYLOAD_SIZE
-                                ),
-                            ))));
-                        }
-                        let data = Bytes::from(s.snappy.decoder.decompress_vec(input)?);
-                        trace!("Decompressed raw message data: {}", hex::encode(&data));
+                // if the message is empty, error early
+                if val.is_empty() {
+                    return Poll::Ready(Some(Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "empty message",
+                    ))));
+                }
 
-                        if message_id < 0x10 {
-                            match message_id {
-                                0x01 => {
+                let input = &val[1..];
+                let payload_len = snap::raw::decompress_len(input)?;
+                if payload_len > MAX_PAYLOAD_SIZE {
+                    return Poll::Ready(Some(Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "payload size ({}) exceeds limit ({} bytes)",
+                            payload_len, MAX_PAYLOAD_SIZE
+                        ),
+                    ))));
+                }
+
+                match CompressedRLPxMessage::decode(&mut &val[..]) {
+                    Ok(compressed) => {
+                        match compressed {
+                            CompressedRLPxMessage::P2P(p2p_message) => match p2p_message {
+                                P2PMessage::Disconnect(reason) => {
                                     s.disconnected = true;
-                                    if let Some(reason) = u8::decode(&mut &*data)
-                                        .ok()
-                                        .and_then(DisconnectReason::from_u8)
-                                    {
-                                        return Poll::Ready(Some(Ok(PeerMessage::Disconnect(
-                                            reason,
-                                        ))));
-                                    } else {
-                                        return Poll::Ready(Some(Err(io::Error::new(
-                                            io::ErrorKind::Other,
-                                            format!(
-                                                "peer disconnected with malformed message: {}",
-                                                hex::encode(data)
-                                            ),
-                                        ))));
+                                    return Poll::Ready(Some(Ok(DevP2PMessage::P2P(p2p_message))));
+                                },
+                                P2PMessage::Ping => {
+                                    debug!("received ping message");
+                                    return Poll::Ready(Some(Ok(DevP2PMessage::P2P(p2p_message))));
+                                },
+                                P2PMessage::Pong => {
+                                    debug!("received pong message");
+                                    return Poll::Ready(Some(Ok(DevP2PMessage::P2P(p2p_message))));
+                                },
+                                P2PMessage::Hello(hello) => {
+                                    return Poll::Ready(Some(Ok(DevP2PMessage::P2P(p2p_message))));
+                                },
+                            },
+                            CompressedRLPxMessage::CompressedSubprotocol(compressed_message) => {
+                                let raw_message = s.snappy.decompress(compressed_message)?;
+                                trace!("Decompressed raw message data: {}", hex::encode(&raw_message.data));
+
+                                let mut id = raw_message.id as usize - 0x10;
+                                let mut index = 0;
+                                for cap in &s.shared_capabilities {
+                                    if id > cap.length {
+                                        id -= cap.length;
+                                        index += 1;
                                     }
                                 }
-                                0x02 => {
-                                    debug!("received ping message data {:?}", data);
-                                    return Poll::Ready(Some(Ok(PeerMessage::Ping)));
-                                }
-                                0x03 => {
-                                    debug!("received pong message");
-                                    return Poll::Ready(Some(Ok(PeerMessage::Pong)));
-                                }
-                                _ => {
-                                    debug!("received unknown reserved message");
+
+                                if index >= s.shared_capabilities.len() {
                                     return Poll::Ready(Some(Err(io::Error::new(
                                         io::ErrorKind::Other,
-                                        "unhandled reserved message",
+                                        "invalid message id (out of cap range)",
                                     ))));
                                 }
-                            }
-                        }
 
-                        let mut message_id = message_id as usize - 0x10;
-                        let mut index = 0;
-                        for cap in &s.shared_capabilities {
-                            if message_id > cap.length {
-                                message_id -= cap.length;
-                                index += 1;
+                                let cap = s.shared_capabilities[index];
+                                trace!(
+                                    "Cap: {}, id: {}, data: {}",
+                                    CapabilityId::from(cap),
+                                    id,
+                                    hex::encode(&raw_message.data)
+                                );
+
+                                Poll::Ready(Some(Ok(DevP2PMessage::Subprotocol(SubprotocolMessage {
+                                    cap_name: cap.name,
+                                    message: raw_message,
+                                }))))
                             }
                         }
-                        if index >= s.shared_capabilities.len() {
-                            return Poll::Ready(Some(Err(io::Error::new(
-                                io::ErrorKind::Other,
-                                "invalid message id (out of cap range)",
-                            ))));
-                        }
-                        (s.shared_capabilities[index], message_id, data)
                     }
                     Err(e) => {
                         return Poll::Ready(Some(Err(io::Error::new(
@@ -386,25 +514,157 @@ where
                             format!("message id parsing failed (invalid): {}", e),
                         ))));
                     }
-                };
-
-                trace!(
-                    "Cap: {}, id: {}, data: {}",
-                    CapabilityId::from(cap),
-                    id,
-                    hex::encode(&data)
-                );
-
-                Poll::Ready(Some(Ok(PeerMessage::Subprotocol(SubprotocolMessage {
-                    cap_name: cap.name,
-                    message: Message { id, data },
-                }))))
+                }
             }
             Some(Err(e)) => Poll::Ready(Some(Err(e))),
             None => Poll::Ready(None),
         }
     }
 }
+
+
+impl<Io> Sink<DevP2PMessage> for PeerStream<Io>
+where
+    Io: Transport,
+{
+    type Error = io::Error;
+
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.get_mut().stream).poll_ready(cx)
+    }
+
+    fn start_send(self: Pin<&mut Self>, message: DevP2PMessage) -> Result<(), Self::Error> {
+        let this = self.get_mut();
+
+        if this.disconnected {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "disconnection requested",
+            ));
+        }
+
+        // hello is the only message not encrypted, so we need to implement an approach similar to
+        // new()
+        if let DevP2PMessage::P2P(P2PMessage::Hello(hello)) = message {
+            todo!()
+        }
+
+        let (message_id, payload) = match message {
+            DevP2PMessage::P2P(p2p_message) => match p2p_message {
+                P2PMessage::Disconnect(reason) => {
+                    this.disconnected = true;
+                    (
+                        0x01,
+                        fastrlp::encode_fixed_size(&reason.to_u8().unwrap())
+                            .to_vec()
+                            .into(),
+                    )
+                },
+                P2PMessage::Ping => (P2PMessageID::Ping as u8, Bytes::from_static(&[EMPTY_LIST_CODE])),
+                P2PMessage::Pong => (P2PMessageID::Pong as u8, Bytes::from_static(&[EMPTY_LIST_CODE])),
+                P2PMessage::Hello(hello) => {
+                    if payload.len() > MAX_PAYLOAD_SIZE {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            format!(
+                                "payload size ({}) exceeds limit ({} bytes)",
+                                payload.len(),
+                                MAX_PAYLOAD_SIZE
+                            ),
+                        ));
+                    }
+
+                },
+            },
+            PeerMessage::Disconnect(reason) => {
+                this.disconnected = true;
+                (
+                    0x01,
+                    fastrlp::encode_fixed_size(&reason.to_u8().unwrap())
+                        .to_vec()
+                        .into(),
+                )
+            }
+            PeerMessage::Ping => {
+                debug!("sending ping message");
+                (0x02, Bytes::from_static(&[EMPTY_LIST_CODE]))
+            }
+            PeerMessage::Pong => {
+                debug!("sending pong message");
+                (0x03, Bytes::from_static(&[EMPTY_LIST_CODE]))
+            }
+            PeerMessage::Subprotocol(SubprotocolMessage { cap_name, message }) => {
+                let Message { id, data } = message;
+                let cap = *this
+                    .shared_capabilities
+                    .iter()
+                    .find(|cap| cap.name == cap_name)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "attempted to send payload of unsupported capability ({}/{}/{})",
+                            cap_name.0,
+                            id,
+                            this.remote_id(),
+                        )
+                    });
+
+                assert!(
+                    id < cap.length,
+                    "attempted to send payload with message id too big ({}/{}/{})",
+                    cap_name.0,
+                    id,
+                    this.remote_id()
+                );
+
+                let mut message_id = 0x10;
+                for scap in &this.shared_capabilities {
+                    if scap == &cap {
+                        break;
+                    }
+
+                    message_id += scap.length;
+                }
+                message_id += id;
+
+                (message_id, data)
+            }
+        };
+
+        let mut msg = BytesMut::with_capacity(2 + payload.len());
+        message_id.encode(&mut msg);
+
+        let mut buf = msg.split_off(msg.len());
+
+        if payload.len() > MAX_PAYLOAD_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "payload size ({}) exceeds limit ({} bytes)",
+                    payload.len(),
+                    MAX_PAYLOAD_SIZE
+                ),
+            ));
+        }
+
+        buf.resize(snap::raw::max_compress_len(payload.len()), 0);
+
+        let compressed_len = this.snappy.encoder.compress(&*payload, &mut buf).unwrap();
+        buf.truncate(compressed_len);
+
+        msg.unsplit(buf);
+
+        Pin::new(&mut this.stream).start_send(msg.freeze())?;
+
+        Ok(())
+    }
+}
+
+// todo: make these more like a succession of streams and sinks, going from raw -> compressed, and
+// compressed -> devp2p for the stream
+// then, the sink can be a succession of sinks, going from devp2p -> compressed, and compressed ->
+// raw
+
+// smh the only message here that isnt compressed is the `Hello` message
 
 impl<Io> Sink<PeerMessage> for PeerStream<Io>
 where

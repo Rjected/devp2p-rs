@@ -8,14 +8,16 @@ use super::{
     types::*,
 };
 use anyhow::{anyhow, bail, Context};
+use bytes::{Buf, Bytes};
 use cidr::IpCidr;
 use educe::Educe;
+use fastrlp::{Encodable, Decodable};
 use futures::sink::SinkExt;
 use lru::LruCache;
 use parking_lot::Mutex;
 use secp256k1::SecretKey;
 use std::{
-    collections::{hash_map::Entry, BTreeMap, HashMap},
+    collections::{hash_map::Entry, BTreeMap, HashMap, HashSet},
     fmt::Debug,
     future::Future,
     net::SocketAddr,
@@ -924,5 +926,255 @@ impl<C: CapabilityServer> Deref for Swarm<C> {
 
     fn deref(&self) -> &Self::Target {
         &*self.capability_server
+    }
+}
+
+// The above code manages peers on devp2p, using an experimental crate based on the concept of
+// structured concurrency.
+// The code below manages peers on devp2p, using patterns from the `tower` crate, and its `Service`
+// abstraction rather than the above code's `CapabilityServer` abstraction.
+// It is more efficient, more production-ready, and manages backpressure better.
+
+/// A struct that manages peers like `Swarm<C>`, but using a `Service` instead of a
+/// `CapabilityServer`.
+pub struct ServiceSwarm<S, F> {
+    /// The service that handles incoming requests.
+    service: S,
+
+    /// The local node's `ClientVersion`.
+    client_version: String,
+    /// The local node's `Port`.
+    port: u16,
+    /// The local node's `SecretKey`.
+    secret_key: SecretKey,
+    /// The local node's `Capabilities`.
+    capabilities: Arc<HashSet<CapabilityInfo>>,
+    /// The local node's `NodeFilter`.
+    node_filter: Arc<Mutex<F>>,
+    /// The local node's `PeerStreams`.
+    streams: Arc<Mutex<PeerStreams>>,
+    /// The local node's `currently_connecting`.
+    currently_connecting: Arc<AtomicUsize>,
+}
+
+/// This represents a message for the devp2p `p2p` capability.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum P2PMessage {
+    /// This represents a `Hello` (0x00) message.
+    /// A `Hello` message is the first packet sent over the connection, and sent once by both
+    /// sides. No other messages may be sent until a `Hello` is received. Implementations must ignore
+    /// any additional list elements in Hello because they may be used by a future version.
+    Hello(HelloMessage),
+
+    /// This represents a `Disconnect` (0x01) message.
+    /// A `Disconnect` message informs the peer that a disconnection is imminent; if received, a
+    /// peer should disconnect immediately. When sending, well-behaved hosts give their peers a
+    /// fighting chance (read: wait 2 seconds) to disconnect to before disconnecting themselves.
+    Disconnect(Option<DisconnectReason>),
+
+    /// This represents a `Ping` (0x02) message.
+    /// A `Ping` message requests an immediate reply of Pong from the peer.
+    Ping,
+
+    /// This represents a `Pong` (0x03) message.
+    /// A `Pong` message is the reply to a Ping message.
+    Pong,
+}
+
+/// Represents message IDs for p2p protocol messages.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum P2PMessageID {
+    Hello = 0x00,
+    Disconnect = 0x01,
+    Ping = 0x02,
+    Pong = 0x03,
+}
+
+impl TryFrom<usize> for P2PMessageID {
+    type Error = &'static str;
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(P2PMessageID::Hello),
+            0x01 => Ok(P2PMessageID::Disconnect),
+            0x02 => Ok(P2PMessageID::Ping),
+            0x03 => Ok(P2PMessageID::Pong),
+            _ => Err("invalid P2PMessage ID"),
+        }
+    }
+}
+
+impl Encodable for P2PMessageID {
+    fn length(&self) -> usize {
+        1
+    }
+    fn encode(&self, out: &mut dyn bytes::BufMut) {
+        out.put_u8(*self as u8);
+    }
+}
+
+/// This represents a RLPx message that either contains a message from the `p2p` capability, or
+/// contains a compressed message from a different capability.
+pub enum CompressedRLPxMessage {
+    /// This represents a `P2PMessage`.
+    P2P(P2PMessage),
+
+    /// This represents an uncompressed `Message`.
+    CompressedSubprotocol(Message),
+}
+
+/// This represents a RLPx message that either contains a message from the `p2p` capability, or
+/// contains a RLP-encoded message from a different capability.
+pub enum RLPxMessage {
+    /// This represents a `P2PMessage`.
+    P2P(P2PMessage),
+
+    /// This represents a `Message` that belongs to a subprotocol.
+    Subprotocol(Message),
+}
+
+/// This represents a RLPx message that which is both uncompressed and tagged with a message id and
+/// capability according to a RLPx node's registered capabilities.
+///
+/// In comparison to `RLPxMessage`, this can only be produced by a stateful RLPx node which has
+/// determined which capabilities it has shared with its peer.
+///
+/// These shared capabilities then determine the message IDs that are assigned to each subprotocol
+/// message.
+pub enum DevP2PMessage {
+    /// This represents a `P2PMessage`.
+    P2P(P2PMessage),
+
+    /// This represents a `Message` that belongs to a subprotocol.
+    Subprotocol(SubprotocolMessage),
+}
+
+// if only i could do the above but in the application specific way that I want to do for the rest
+// of the capabilities, I wonder what that would look like
+// like register(P2PCapability::new(), P2PCapability::handle_message) or something
+
+#[derive(Debug)]
+pub struct Snappy {
+    pub encoder: snap::raw::Encoder,
+    pub decoder: snap::raw::Decoder,
+}
+
+impl Default for Snappy {
+    fn default() -> Self {
+        Self {
+            encoder: snap::raw::Encoder::new(),
+            decoder: snap::raw::Decoder::new(),
+        }
+    }
+}
+
+impl Snappy {
+    /// This takes a compressed `Message` and returns an uncompressed `Message`.
+    pub fn decompress(&mut self, message: Message) -> Result<Message, snap::Error> {
+        let mut decompressed = Vec::new();
+        self.decoder
+            .decompress(&message.data, &mut decompressed)?;
+        Ok(Message {
+            id: message.id,
+            data: Bytes::from(decompressed),
+        })
+    }
+
+    /// This takes a compressed `Message` and returns an uncompressed `Message`.
+    pub fn compress(&mut self, message: Message) -> Result<Message, snap::Error> {
+        let mut compressed = Vec::new();
+        self.encoder.compress(&message.data, &mut compressed)?;
+        Ok(Message {
+            id: message.id,
+            data: Bytes::from(compressed),
+        })
+    }
+}
+
+/// The `fastrlp::Decodable` implementation will subtract 0x10 from the message ID if the byte is over 0x10,
+/// to assign the subprotocol's message ID.
+impl Decodable for CompressedRLPxMessage {
+    fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
+        let id = buf.get_u8();
+
+        // convert the rest of the buf to `Bytes` and make sure to advance the slice using
+        // `advance`
+        let data = Bytes::copy_from_slice(buf);
+        buf.advance(buf.len());
+        if id < 0x10 {
+            let message_id = P2PMessageID::try_from(id as usize).map_err(|_| {
+                fastrlp::DecodeError::Custom("unknown reserved `p2p` message ID")
+            })?;
+            match message_id {
+                P2PMessageID::Hello => {
+                    let hello_message = HelloMessage::decode(buf)?;
+                    Ok(CompressedRLPxMessage::P2P(P2PMessage::Hello(hello_message)))
+                }
+                P2PMessageID::Disconnect => {
+                    if buf.is_empty() {
+                        Ok(CompressedRLPxMessage::P2P(P2PMessage::Disconnect(None)))
+                    } else {
+                        let reason_byte = buf.get_u8();
+                        let reason = DisconnectReason::try_from(reason_byte).map_err(|err| {
+                            fastrlp::DecodeError::Custom(err)
+                        })?;
+                        Ok(CompressedRLPxMessage::P2P(P2PMessage::Disconnect(Some(reason))))
+                    }
+                }
+                P2PMessageID::Ping => Ok(CompressedRLPxMessage::P2P(P2PMessage::Ping)),
+                P2PMessageID::Pong => Ok(CompressedRLPxMessage::P2P(P2PMessage::Pong)),
+            }
+        } else {
+            Ok(CompressedRLPxMessage::CompressedSubprotocol(Message {
+                id: (id - 0x10) as usize,
+                data,
+            }))
+        }
+    }
+}
+
+// we want an abstraction like in hyper's register method that uses Services as well.
+// the ideal API is something like:
+// let addr = SocketAddr::from(([127, 0, 0, 1], 30303));
+// let capability_router = P2PRouter::new() // this should automatically implement the `p2p` capability
+//     .register(capability_info, service)
+//     .register(capability_info_2, service_2);
+//
+// let server = Server::bind(&addr)
+//     .serve(capability_router.into_service())
+//     .await
+//     .unwrap();
+
+/// Keeps track of capabilities and their associated services.
+// question: what should the `Request` and `Response` type be here, since we don't know what each
+// Service will use?
+// Maybe we can do something with the associated types for each Service?
+// We can either create a `Service` that returns a `Service`, or we can somehow create a union over
+// each Service's `Request` and `Response` types, like an enum.
+// It seems like if we ever instantiate S with a `Service`, we are stuck to ONLY that struct
+// for map values, which is definitely not what we want.
+// This suggests that the design of P2PRouter is wrong.
+// I've figured it out, we can do something similar to hyper's Router.
+// We can have a `P2PRouter` struct that implements `Service`, and then we can have a `P2PRouterBuilder`
+// struct that implements `ServiceBuilder`.
+// The `P2PRouterBuilder` struct will have a `register` method that takes a `CapabilityInfo` and a
+// `Service`, and then it will return a `P2PRouter` struct that implements `Service`.
+// We solve the problem of not being able to have multiple types for the `Service` by having a
+
+pub struct P2PRouter<S> {
+    services: HashMap<CapabilityInfo, S>,
+}
+
+impl<S> P2PRouter<S> {
+    pub fn new() -> Self {
+        Self {
+            services: HashMap::new(),
+        }
+    }
+
+    pub fn register(mut self, capability_info: CapabilityInfo, service: S) -> Self {
+        self.services.insert(capability_info, service);
+        self
     }
 }

@@ -64,7 +64,7 @@ impl Decodable for CapabilityName {
 pub type CapabilityLength = usize;
 pub type CapabilityVersion = usize;
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash)]
 /// Capability information
 pub struct CapabilityInfo {
     pub name: CapabilityName,
