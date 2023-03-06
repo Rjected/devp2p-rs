@@ -35,7 +35,7 @@ generic-array = "0.14.5"
 hex = "0.4.3"
 hmac = "0.12.1"
 igd = { version = "0.12.0", features = [ "aio" ] }
-lru = "0.7.8"
+lru = "0.10.0"
 maplit = "1.0.2"
 num-traits = "0.2.15"
 parking_lot = "0.12.1"
